@@ -1,0 +1,538 @@
+// Prisma schema for AI CRM Agent.
+// See docs/Master Prompt — AI CRM Agent SaaS.md section 24 for the entity list this implements.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------- Auth ----------
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  passwordHash  String?
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts            Account[]
+  sessions            Session[]
+  memberships         WorkspaceMember[]
+  passwordResetTokens PasswordResetToken[]
+  approvals           Approval[]
+  auditLogs           AuditLog[]
+  notifications       Notification[]
+}
+
+// Auth.js PrismaAdapter standard models (OAuth accounts unused for now — credentials only —
+// but the adapter requires this shape; keeps room for OAuth login later).
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ---------- Workspace / tenancy ----------
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  MANAGER
+  SALES_REP
+}
+
+model Workspace {
+  id                 String   @id @default(cuid())
+  name               String
+  slug               String   @unique
+  ownerId            String
+  plan               String   @default("free")
+  subscriptionStatus String   @default("active")
+  settings           Json?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  members         WorkspaceMember[]
+  crmConnections  CRMConnection[]
+  contacts        Contact[]
+  companies       Company[]
+  deals           Deal[]
+  activities      Activity[]
+  findings        Finding[]
+  recommendations Recommendation[]
+  actions         Action[]
+  approvals       Approval[]
+  auditLogs       AuditLog[]
+  automationRules AutomationRule[]
+  notifications   Notification[]
+  aiUsages        AIUsage[]
+
+  @@index([ownerId])
+}
+
+model WorkspaceMember {
+  id          String        @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        WorkspaceRole @default(SALES_REP)
+  createdAt   DateTime      @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+}
+
+// ---------- CRM integration ----------
+
+enum CRMProvider {
+  HUBSPOT
+}
+
+enum CRMConnectionStatus {
+  CONNECTED
+  DISCONNECTED
+  ERROR
+  EXPIRED
+}
+
+model CRMConnection {
+  id                    String              @id @default(cuid())
+  workspaceId           String
+  provider              CRMProvider         @default(HUBSPOT)
+  status                CRMConnectionStatus @default(DISCONNECTED)
+  externalAccountId     String?
+  accessTokenEncrypted  String?
+  refreshTokenEncrypted String?
+  tokenExpiresAt        DateTime?
+  scopes                String?
+  lastSyncedAt          DateTime?
+  lastSyncError         String?
+  connectedByUserId     String?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  workspace  Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contacts   Contact[]
+  companies  Company[]
+  deals      Deal[]
+  activities Activity[]
+
+  @@unique([workspaceId, provider])
+  @@index([workspaceId])
+}
+
+// ---------- Normalized CRM data ----------
+
+model Contact {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  crmConnectionId String
+  externalId      String
+  firstName       String?
+  lastName        String?
+  email           String?
+  phone           String?
+  jobTitle        String?
+  companyId       String?
+  ownerExternalId String?
+  crmCreatedAt    DateTime?
+  crmUpdatedAt    DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  workspace     Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  crmConnection CRMConnection @relation(fields: [crmConnectionId], references: [id], onDelete: Cascade)
+  company       Company?      @relation(fields: [companyId], references: [id])
+  deals         Deal[]
+  activities    Activity[]
+
+  @@unique([workspaceId, crmConnectionId, externalId])
+  @@index([workspaceId])
+  @@index([companyId])
+}
+
+model Company {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  crmConnectionId String
+  externalId      String
+  name            String?
+  domain          String?
+  industry        String?
+  crmCreatedAt    DateTime?
+  crmUpdatedAt    DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  workspace     Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  crmConnection CRMConnection @relation(fields: [crmConnectionId], references: [id], onDelete: Cascade)
+  contacts      Contact[]
+  deals         Deal[]
+  activities    Activity[]
+
+  @@unique([workspaceId, crmConnectionId, externalId])
+  @@index([workspaceId])
+}
+
+model Deal {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  crmConnectionId String
+  externalId      String
+  name            String?
+  amount          Decimal?  @db.Decimal(14, 2)
+  stage           String?
+  pipeline        String?
+  ownerExternalId String?
+  contactId       String?
+  companyId       String?
+  closeDate       DateTime?
+  isClosed        Boolean   @default(false)
+  isWon           Boolean?
+  lastActivityAt  DateTime?
+  stageChangedAt  DateTime?
+  crmCreatedAt    DateTime?
+  crmUpdatedAt    DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  workspace       Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  crmConnection   CRMConnection    @relation(fields: [crmConnectionId], references: [id], onDelete: Cascade)
+  contact         Contact?         @relation(fields: [contactId], references: [id])
+  company         Company?         @relation(fields: [companyId], references: [id])
+  activities      Activity[]
+  findings        Finding[]
+  recommendations Recommendation[]
+
+  @@unique([workspaceId, crmConnectionId, externalId])
+  @@index([workspaceId])
+  @@index([workspaceId, lastActivityAt])
+  @@index([workspaceId, stage])
+}
+
+model Activity {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  crmConnectionId String
+  externalId      String
+  type            String
+  dealId          String?
+  contactId       String?
+  companyId       String?
+  subject         String?
+  body            String?
+  ownerExternalId String?
+  occurredAt      DateTime
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  workspace     Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  crmConnection CRMConnection @relation(fields: [crmConnectionId], references: [id], onDelete: Cascade)
+  deal          Deal?         @relation(fields: [dealId], references: [id])
+  contact       Contact?      @relation(fields: [contactId], references: [id])
+  company       Company?      @relation(fields: [companyId], references: [id])
+
+  @@unique([workspaceId, crmConnectionId, externalId])
+  @@index([workspaceId])
+  @@index([workspaceId, dealId])
+  @@index([workspaceId, occurredAt])
+}
+
+// ---------- Pipeline health / AI ----------
+
+enum FindingType {
+  STALE_OPPORTUNITY
+  MISSING_FOLLOW_UP
+  DEAL_STAGNATION
+  NO_NEXT_STEP
+  MISSING_CRM_DATA
+  UNUSUAL_INACTIVITY
+  POTENTIALLY_LOST_DEAL
+}
+
+enum Severity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum FindingStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+}
+
+model Finding {
+  id             String        @id @default(cuid())
+  workspaceId    String
+  type           FindingType
+  severity       Severity
+  dealId         String?
+  crmRecordType  String
+  crmRecordId    String
+  explanation    String
+  evidence       Json
+  recommendation String?
+  confidence     Float
+  status         FindingStatus @default(OPEN)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  workspace       Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  deal            Deal?            @relation(fields: [dealId], references: [id])
+  recommendations Recommendation[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, status])
+}
+
+enum RecommendationType {
+  SEND_EMAIL
+  CREATE_TASK
+  UPDATE_FIELD
+  CHANGE_STAGE
+  ADD_NOTE
+  ASSIGN_OWNER
+  SCHEDULE_FOLLOWUP
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+model Recommendation {
+  id               String             @id @default(cuid())
+  workspaceId      String
+  findingId        String?
+  dealId           String?
+  type             RecommendationType
+  targetRecordType String
+  targetRecordId   String
+  reasoning        String
+  evidence         Json
+  proposedAction   Json
+  confidence       Float
+  riskLevel        RiskLevel
+  createdAt        DateTime           @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  finding   Finding?  @relation(fields: [findingId], references: [id])
+  deal      Deal?     @relation(fields: [dealId], references: [id])
+  actions   Action[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, findingId])
+}
+
+// ---------- Approval / action execution ----------
+
+enum ActionStatus {
+  PROPOSED
+  APPROVED
+  REJECTED
+  EXECUTING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model Action {
+  id               String             @id @default(cuid())
+  workspaceId      String
+  recommendationId String?
+  type             RecommendationType
+  targetRecordType String
+  targetRecordId   String
+  payload          Json
+  status           ActionStatus       @default(PROPOSED)
+  resultSummary    String?
+  errorMessage     String?
+  executedAt       DateTime?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  recommendation Recommendation? @relation(fields: [recommendationId], references: [id])
+  approval       Approval?
+  auditLogs      AuditLog[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, status])
+}
+
+enum ApprovalDecision {
+  APPROVED
+  REJECTED
+}
+
+model Approval {
+  id          String           @id @default(cuid())
+  workspaceId String
+  actionId    String           @unique
+  userId      String
+  decision    ApprovalDecision
+  notes       String?
+  decidedAt   DateTime         @default(now())
+
+  workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  action    Action     @relation(fields: [actionId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id])
+  auditLogs AuditLog[]
+
+  @@index([workspaceId])
+}
+
+// ---------- Audit log ----------
+
+enum ActorType {
+  USER
+  AI
+  SYSTEM
+}
+
+model AuditLog {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  userId          String?
+  actorType       ActorType
+  action          String
+  targetType      String?
+  targetId        String?
+  previousState   Json?
+  newState        Json?
+  actionId        String?
+  approvalId      String?
+  executionResult Json?
+  source          String?
+  errorMessage    String?
+  createdAt       DateTime  @default(now())
+
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user            User?     @relation(fields: [userId], references: [id])
+  relatedAction   Action?   @relation(fields: [actionId], references: [id])
+  relatedApproval Approval? @relation(fields: [approvalId], references: [id])
+
+  @@index([workspaceId])
+  @@index([workspaceId, createdAt])
+}
+
+// ---------- Automation ----------
+
+model AutomationRule {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  name            String
+  description     String?
+  isActive        Boolean  @default(true)
+  condition       Json
+  thenAction      String
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}
+
+// ---------- Notifications ----------
+
+enum NotificationType {
+  NEW_RECOMMENDATION
+  ACTION_FAILED
+  SYNC_FAILURE
+  DEAL_RISK
+  PENDING_APPROVAL
+}
+
+model Notification {
+  id          String           @id @default(cuid())
+  workspaceId String
+  userId      String?
+  type        NotificationType
+  title       String
+  body        String
+  isRead      Boolean          @default(false)
+  relatedType String?
+  relatedId   String?
+  createdAt   DateTime         @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User?     @relation(fields: [userId], references: [id])
+
+  @@index([workspaceId])
+  @@index([workspaceId, userId, isRead])
+}
+
+// ---------- AI usage / cost tracking ----------
+
+model AIUsage {
+  id               String   @id @default(cuid())
+  workspaceId      String
+  model            String
+  operation        String
+  inputTokens      Int
+  outputTokens     Int
+  estimatedCostUsd Decimal  @db.Decimal(10, 4)
+  createdAt        DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([workspaceId, createdAt])
+}
