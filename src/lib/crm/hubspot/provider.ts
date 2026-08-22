@@ -1,4 +1,4 @@
-import { HubSpotClient } from "./client";
+import { HubSpotApiError, HubSpotClient } from "./client";
 import type {
   ActivityType,
   CRMProvider,
@@ -257,13 +257,26 @@ export class HubSpotProvider implements CRMProvider {
       // very first page.
       if (options.cursor && !(type in cursors)) continue;
 
-      const page = await this.listRecords(
-        config.objectType,
-        [...config.properties, "hs_object_id"],
-        "contacts,deals,companies",
-        "hs_timestamp",
-        { cursor, modifiedSince: options.modifiedSince },
-      );
+      let page: Page<HubSpotRecord>;
+      try {
+        page = await this.listRecords(
+          config.objectType,
+          [...config.properties, "hs_object_id"],
+          "contacts,deals,companies",
+          "hs_timestamp",
+          { cursor, modifiedSince: options.modifiedSince },
+        );
+      } catch (error) {
+        // Some engagement types (notably emails) require scopes beyond
+        // the standard crm.objects.contacts/deals/companies set on some
+        // accounts, and HubSpot's own scope docs for that endpoint are
+        // unreliable about which scope actually works. Rather than fail
+        // the whole sync over one inaccessible engagement type, skip it
+        // and keep going — contacts/companies/deals and the other
+        // activity types still sync normally.
+        if (error instanceof HubSpotApiError && error.status === 403) continue;
+        throw error;
+      }
 
       for (const r of page.items) {
         const occurredAt = toDate(r.properties.hs_timestamp) ?? new Date();
