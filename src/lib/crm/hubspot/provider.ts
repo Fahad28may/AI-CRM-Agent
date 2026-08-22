@@ -128,6 +128,12 @@ export class HubSpotProvider implements CRMProvider {
     options: ListOptions,
   ): Promise<Page<HubSpotRecord>> {
     if (options.modifiedSince) {
+      // The Search API silently ignores an `associations` field in the
+      // request body (HubSpot documents this: associations are only
+      // supported on GET-by-id and batch read, not search) — so every
+      // incremental sync would otherwise lose contact/company/deal links
+      // on any record touched after the first full sync. Fetch them in a
+      // second pass instead.
       const response = await this.client.post<HubSpotListResponse>(
         `/crm/v3/objects/${objectType}/search`,
         {
@@ -144,11 +150,13 @@ export class HubSpotProvider implements CRMProvider {
           ],
           sorts: [{ propertyName: lastModifiedProperty, direction: "ASCENDING" }],
           properties,
-          associations: associations ? associations.split(",") : undefined,
           limit: 100,
           after: options.cursor ?? undefined,
         },
       );
+      if (associations) {
+        await this.attachAssociations(objectType, response.results, associations);
+      }
       return { items: response.results, nextCursor: response.paging?.next?.after ?? null };
     }
 
@@ -159,6 +167,33 @@ export class HubSpotProvider implements CRMProvider {
       after: options.cursor ?? undefined,
     });
     return { items: response.results, nextCursor: response.paging?.next?.after ?? null };
+  }
+
+  /** Batch-fetches associations for a page of search results and merges them onto each record, in place. */
+  private async attachAssociations(
+    fromObjectType: string,
+    records: HubSpotRecord[],
+    associations: string,
+  ): Promise<void> {
+    if (records.length === 0) return;
+
+    for (const toObjectType of associations.split(",")) {
+      const response = await this.client.post<{
+        results: { from: { id: string }; to: { toObjectId: number | string }[] }[];
+      }>(`/crm/v4/associations/${fromObjectType}/${toObjectType}/batch/read`, {
+        inputs: records.map((r) => ({ id: r.id })),
+      });
+
+      const byFromId = new Map(response.results.map((r) => [r.from.id, r.to]));
+      for (const record of records) {
+        const to = byFromId.get(record.id);
+        if (!to || to.length === 0) continue;
+        record.associations = record.associations ?? {};
+        record.associations[toObjectType] = {
+          results: to.map((t) => ({ id: String(t.toObjectId), type: "" })),
+        };
+      }
+    }
   }
 
   async getContacts(options: ListOptions): Promise<Page<NormalizedContact>> {
