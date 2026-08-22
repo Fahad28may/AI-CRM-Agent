@@ -44,6 +44,7 @@ export const RecommendationOutputSchema = z.object({
   riskLevel: z.enum(["LOW", "MEDIUM", "HIGH"]),
 });
 export type RecommendationOutput = z.infer<typeof RecommendationOutputSchema>;
+export type ProposedAction = z.infer<typeof ProposedActionSchema>;
 
 export const FollowUpEmailSchema = z.object({
   subject: z.string(),

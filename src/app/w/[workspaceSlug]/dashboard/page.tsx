@@ -22,7 +22,14 @@ export default async function WorkspaceDashboardPage({
         where: { workspaceId: workspace.id },
         orderBy: { createdAt: "desc" },
         take: 5,
-        include: { deal: { select: { name: true } } },
+        include: {
+          deal: { select: { name: true } },
+          actions: {
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            select: { id: true, status: true, resultSummary: true, errorMessage: true },
+          },
+        },
       })
     : [];
 
@@ -73,6 +80,7 @@ export default async function WorkspaceDashboardPage({
                 confidence: r.confidence,
                 riskLevel: r.riskLevel,
                 createdAt: r.createdAt,
+                latestAction: r.actions[0] ?? null,
               }))}
             />
           )}

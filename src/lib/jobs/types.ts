@@ -5,6 +5,7 @@ export type JobPayloadMap = {
   CRM_SYNC: { connectionId: string };
   PIPELINE_ANALYSIS: { workspaceId: string };
   DEAL_ANALYSIS: { findingId: string };
+  EXECUTE_ACTION: { actionId: string };
 };
 
 export type JobHandler<T extends JobType> = (payload: JobPayloadMap[T]) => Promise<void>;

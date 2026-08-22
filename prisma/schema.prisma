@@ -561,6 +561,7 @@ enum JobType {
   CRM_SYNC
   PIPELINE_ANALYSIS
   DEAL_ANALYSIS
+  EXECUTE_ACTION
 }
 
 enum JobStatus {
