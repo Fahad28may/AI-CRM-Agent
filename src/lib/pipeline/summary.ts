@@ -38,6 +38,15 @@ function bucketFor(findings: OpenFinding[]): PipelineBucket {
   return "healthy";
 }
 
+// Safety cap, not a real pagination story yet — this function fetches
+// every open deal and buckets them in JS (bucketFor's priority logic
+// doesn't map cleanly onto a single SQL WHERE), so an unbounded query
+// here is the actual risk at scale, not the bucketing itself. Capped
+// and ordered so a large pipeline degrades to "shows the most-neglected
+// N deals" instead of an unbounded query — never-contacted deals
+// (nulls) are exactly the ones that should never be the ones dropped.
+const MAX_PIPELINE_DEALS = 500;
+
 export async function getWorkspacePipeline(workspaceId: string): Promise<PipelineDeal[]> {
   const deals = await db.deal.findMany({
     where: { workspaceId, isClosed: false },
@@ -52,7 +61,8 @@ export async function getWorkspacePipeline(workspaceId: string): Promise<Pipelin
         select: { type: true, severity: true, explanation: true },
       },
     },
-    orderBy: { lastActivityAt: "asc" },
+    orderBy: { lastActivityAt: { sort: "asc", nulls: "first" } },
+    take: MAX_PIPELINE_DEALS,
   });
 
   return deals.map((deal) => ({
