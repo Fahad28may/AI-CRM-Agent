@@ -3,6 +3,7 @@ import { FindingStatus } from "@/generated/prisma/enums";
 import type { Prisma } from "@/generated/prisma/client";
 import { ALL_FINDING_TYPES, runDetectors } from "@/lib/pipeline/rules";
 import type { DealActivity, DetectableDeal, FindingCandidate } from "@/lib/pipeline/rules";
+import { getWorkspaceRuleConfig } from "@/lib/pipeline/automation";
 
 const ACTIVITIES_PER_DEAL = 50;
 
@@ -65,6 +66,7 @@ async function upsertFindingsForDeal(
  */
 export async function analyzeWorkspacePipeline(workspaceId: string): Promise<void> {
   const now = new Date();
+  const ruleConfig = await getWorkspaceRuleConfig(workspaceId);
 
   const deals = await db.deal.findMany({
     where: { workspaceId, isClosed: false },
@@ -99,7 +101,7 @@ export async function analyzeWorkspacePipeline(workspaceId: string): Promise<voi
       createdAt: deal.createdAt,
     };
     const activities: DealActivity[] = deal.activities;
-    const candidates = runDetectors(detectable, activities, now);
+    const candidates = runDetectors(detectable, activities, now, ruleConfig);
     await upsertFindingsForDeal(workspaceId, detectable, candidates);
   }
 

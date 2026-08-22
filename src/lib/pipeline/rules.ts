@@ -35,6 +35,27 @@ export type FindingCandidate = {
   confidence: number;
 };
 
+/**
+ * Per-workspace overrides for the three day-threshold detectors, plus a
+ * set of finding types to skip entirely — this is what AutomationRule
+ * rows (section 17) resolve to (see src/lib/pipeline/automation.ts).
+ * Defaults match thresholds.ts exactly, so callers that don't pass a
+ * config get identical behavior to before this existed.
+ */
+export type RuleConfig = {
+  staleDays: number;
+  stagnationDays: number;
+  followUpDays: number;
+  disabledTypes: ReadonlySet<FindingType>;
+};
+
+export const DEFAULT_RULE_CONFIG: RuleConfig = {
+  staleDays: STALE_DAYS,
+  stagnationDays: STAGNATION_DAYS,
+  followUpDays: FOLLOW_UP_DAYS,
+  disabledTypes: new Set(),
+};
+
 const CONVERSATIONAL_TYPES = new Set(["CALL", "EMAIL", "MEETING"]);
 
 function hasUpcomingTask(activities: DealActivity[], now: Date): boolean {
@@ -45,14 +66,15 @@ function detectStaleOpportunity(
   deal: DetectableDeal,
   _activities: DealActivity[],
   now: Date,
+  staleDays: number,
 ): FindingCandidate | null {
   const reference = deal.lastActivityAt ?? deal.createdAt;
   const daysSince = daysBetween(now, reference);
-  if (daysSince < STALE_DAYS) return null;
+  if (daysSince < staleDays) return null;
 
   return {
     type: FindingType.STALE_OPPORTUNITY,
-    severity: daysSince >= STALE_DAYS * 2 ? Severity.HIGH : Severity.MEDIUM,
+    severity: daysSince >= staleDays * 2 ? Severity.HIGH : Severity.MEDIUM,
     explanation: `No recorded activity on this deal for ${daysSince} days.`,
     evidence: { daysSinceActivity: daysSince, lastActivityAt: deal.lastActivityAt },
     recommendation: "Reach out to re-engage the prospect, or confirm whether this deal is still active.",
@@ -64,12 +86,13 @@ function detectMissingFollowUp(
   deal: DetectableDeal,
   activities: DealActivity[],
   now: Date,
+  followUpDays: number,
 ): FindingCandidate | null {
   const mostRecent = activities[0];
   if (!mostRecent || !CONVERSATIONAL_TYPES.has(mostRecent.type)) return null;
 
   const daysSince = daysBetween(now, mostRecent.occurredAt);
-  if (daysSince < FOLLOW_UP_DAYS || hasUpcomingTask(activities, now)) return null;
+  if (daysSince < followUpDays || hasUpcomingTask(activities, now)) return null;
 
   return {
     type: FindingType.MISSING_FOLLOW_UP,
@@ -89,14 +112,15 @@ function detectDealStagnation(
   deal: DetectableDeal,
   _activities: DealActivity[],
   now: Date,
+  stagnationDays: number,
 ): FindingCandidate | null {
   const reference = deal.stageChangedAt ?? deal.createdAt;
   const daysInStage = daysBetween(now, reference);
-  if (daysInStage < STAGNATION_DAYS) return null;
+  if (daysInStage < stagnationDays) return null;
 
   return {
     type: FindingType.DEAL_STAGNATION,
-    severity: daysInStage >= STAGNATION_DAYS * 2 ? Severity.HIGH : Severity.MEDIUM,
+    severity: daysInStage >= stagnationDays * 2 ? Severity.HIGH : Severity.MEDIUM,
     explanation: `This deal has stayed in its current stage for ${daysInStage} days.`,
     evidence: { daysInStage, stageChangedAt: deal.stageChangedAt },
     recommendation: "Confirm the deal is still progressing, or move it to the correct stage.",
@@ -164,12 +188,24 @@ function detectUnusualInactivity(
 }
 
 /** Deal-scoped risk signals, used both directly and as inputs to the composite "potentially lost" check. */
-const RISK_DETECTORS = [
-  detectStaleOpportunity,
-  detectMissingFollowUp,
-  detectDealStagnation,
-  detectNoNextStep,
-  detectUnusualInactivity,
+const RISK_DETECTORS: {
+  type: FindingType;
+  run: (deal: DetectableDeal, activities: DealActivity[], now: Date, config: RuleConfig) => FindingCandidate | null;
+}[] = [
+  {
+    type: FindingType.STALE_OPPORTUNITY,
+    run: (deal, activities, now, config) => detectStaleOpportunity(deal, activities, now, config.staleDays),
+  },
+  {
+    type: FindingType.MISSING_FOLLOW_UP,
+    run: (deal, activities, now, config) => detectMissingFollowUp(deal, activities, now, config.followUpDays),
+  },
+  {
+    type: FindingType.DEAL_STAGNATION,
+    run: (deal, activities, now, config) => detectDealStagnation(deal, activities, now, config.stagnationDays),
+  },
+  { type: FindingType.NO_NEXT_STEP, run: detectNoNextStep },
+  { type: FindingType.UNUSUAL_INACTIVITY, run: detectUnusualInactivity },
 ];
 
 function detectPotentiallyLostDeal(riskFindings: FindingCandidate[]): FindingCandidate | null {
@@ -190,12 +226,13 @@ export function runDetectors(
   deal: DetectableDeal,
   activities: DealActivity[],
   now: Date,
+  config: RuleConfig = DEFAULT_RULE_CONFIG,
 ): FindingCandidate[] {
   if (deal.isClosed) return [];
 
-  const riskFindings = RISK_DETECTORS.map((detect) => detect(deal, activities, now)).filter(
-    (f): f is FindingCandidate => f !== null,
-  );
+  const riskFindings = RISK_DETECTORS.filter((d) => !config.disabledTypes.has(d.type))
+    .map((d) => d.run(deal, activities, now, config))
+    .filter((f): f is FindingCandidate => f !== null);
   const crmDataFinding = detectMissingCrmData(deal);
   const lostDealFinding = detectPotentiallyLostDeal(riskFindings);
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FindingType, Severity } from "@/generated/prisma/enums";
-import { runDetectors } from "@/lib/pipeline/rules";
+import { DEFAULT_RULE_CONFIG, runDetectors } from "@/lib/pipeline/rules";
 import type { DealActivity, DetectableDeal } from "@/lib/pipeline/rules";
 
 const NOW = new Date("2026-08-21T00:00:00Z");
@@ -191,6 +191,39 @@ describe("runDetectors", () => {
         hasCloseDate: false,
       });
       expect(types(deal, [])).not.toContain(FindingType.POTENTIALLY_LOST_DEAL);
+    });
+  });
+
+  describe("RuleConfig overrides", () => {
+    it("uses a workspace's custom threshold instead of the default", () => {
+      const deal = baseDeal({ lastActivityAt: daysAgo(5) });
+      // Default STALE_DAYS is 14, so this wouldn't normally fire yet.
+      expect(types(deal, [])).not.toContain(FindingType.STALE_OPPORTUNITY);
+
+      const found = runDetectors(deal, [], NOW, { ...DEFAULT_RULE_CONFIG, staleDays: 3 });
+      expect(found.map((f) => f.type)).toContain(FindingType.STALE_OPPORTUNITY);
+    });
+
+    it("skips a detector entirely when its finding type is disabled", () => {
+      const deal = baseDeal({ lastActivityAt: daysAgo(20) });
+      expect(types(deal, [])).toContain(FindingType.STALE_OPPORTUNITY);
+
+      const found = runDetectors(deal, [], NOW, {
+        ...DEFAULT_RULE_CONFIG,
+        disabledTypes: new Set([FindingType.STALE_OPPORTUNITY]),
+      });
+      expect(found.map((f) => f.type)).not.toContain(FindingType.STALE_OPPORTUNITY);
+    });
+
+    it("excludes disabled risk signals from the composite POTENTIALLY_LOST_DEAL count", () => {
+      // Same deal as the earlier 3-signal test, but with one signal disabled
+      // it should drop below the threshold for the composite finding.
+      const deal = baseDeal({ lastActivityAt: daysAgo(40), stageChangedAt: daysAgo(40) });
+      const found = runDetectors(deal, [], NOW, {
+        ...DEFAULT_RULE_CONFIG,
+        disabledTypes: new Set([FindingType.NO_NEXT_STEP]),
+      });
+      expect(found.map((f) => f.type)).not.toContain(FindingType.POTENTIALLY_LOST_DEAL);
     });
   });
 });
