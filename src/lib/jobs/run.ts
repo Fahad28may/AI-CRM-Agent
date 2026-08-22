@@ -2,8 +2,14 @@ import { db } from "@/lib/db";
 import { HANDLERS } from "@/lib/jobs/dispatch";
 import { claimJob, completeJob, enqueueJob, failJob, listDueJobIds } from "@/lib/jobs/queue";
 import { findFindingsNeedingRecommendation } from "@/lib/ai/service";
-import { JobType, NotificationType } from "@/generated/prisma/enums";
+import { CRMConnectionStatus, JobType, NotificationType } from "@/generated/prisma/enums";
 import type { JobPayloadMap } from "@/lib/jobs/types";
+
+// Section 17/Phase 7 "scheduled analysis": deals can cross a staleness/
+// stagnation threshold purely because time passed, with no new CRM
+// activity to trigger a sync. Once a day per connected workspace is
+// plenty for day-granularity thresholds and keeps this cheap.
+const SCHEDULED_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 // Bounds how many AI recommendation calls happen inline (blocking the
 // after() continuation that triggered them) per pipeline analysis run —
@@ -88,4 +94,28 @@ export async function runDueJobs(limit = 20): Promise<number> {
     await runJob(id);
   }
   return ids.length;
+}
+
+/**
+ * Enqueues a CRM_SYNC for every connected workspace that hasn't synced
+ * recently — CRM_SYNC already cascades into PIPELINE_ANALYSIS and
+ * DEAL_ANALYSIS once it completes (see runJob above), so this single
+ * enqueue is what turns "time passed" into fresh findings and
+ * recommendations without anyone clicking "Sync now". Called from the
+ * cron sweep, not run inline, since it fans out across every workspace.
+ */
+export async function scheduleDueAnalysis(): Promise<number> {
+  const cutoff = new Date(Date.now() - SCHEDULED_SYNC_INTERVAL_MS);
+  const connections = await db.cRMConnection.findMany({
+    where: {
+      status: CRMConnectionStatus.CONNECTED,
+      OR: [{ lastSyncedAt: null }, { lastSyncedAt: { lt: cutoff } }],
+    },
+    select: { id: true, workspaceId: true },
+  });
+
+  for (const connection of connections) {
+    await enqueueJob(connection.workspaceId, JobType.CRM_SYNC, { connectionId: connection.id });
+  }
+  return connections.length;
 }

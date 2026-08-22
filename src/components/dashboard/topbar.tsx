@@ -4,6 +4,7 @@ import Link from "next/link";
 import { signOut } from "next-auth/react";
 import { useWorkspace } from "@/lib/workspace-context";
 import { Button } from "@/components/ui/button";
+import { NotificationBell } from "@/components/dashboard/notification-bell";
 
 export function DashboardTopbar({ userEmail }: { userEmail: string }) {
   const workspace = useWorkspace();
@@ -18,6 +19,7 @@ export function DashboardTopbar({ userEmail }: { userEmail: string }) {
         </Link>
       </div>
       <div className="flex items-center gap-3">
+        <NotificationBell />
         <span className="text-sm text-zinc-500">{userEmail}</span>
         <Button variant="ghost" onClick={() => signOut({ callbackUrl: "/login" })}>
           Log out
