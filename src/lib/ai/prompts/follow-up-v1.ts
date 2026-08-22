@@ -1,5 +1,5 @@
 import { AI_SAFETY_PREAMBLE } from "@/lib/ai/prompts/system";
-import { buildDealContextBlock } from "@/lib/ai/prompts/context";
+import { buildDealContextBlock, escapeForPrompt } from "@/lib/ai/prompts/context";
 import type { DealAiContext } from "@/lib/ai/prompts/context";
 
 const TASK_INSTRUCTIONS = `TASK:
@@ -21,7 +21,7 @@ export function buildFollowUpPrompt(params: {
     buildDealContextBlock(context),
     "",
     `<CRM_DATA>`,
-    `Reason for this follow-up: ${reason}`,
+    `Reason for this follow-up: ${escapeForPrompt(reason)}`,
     `</CRM_DATA>`,
     "",
     TASK_INSTRUCTIONS,
