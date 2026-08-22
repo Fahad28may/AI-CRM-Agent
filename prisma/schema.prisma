@@ -116,6 +116,7 @@ model Workspace {
   automationRules AutomationRule[]
   notifications   Notification[]
   aiUsages        AIUsage[]
+  jobs            Job[]
 
   @@index([ownerId])
 }
@@ -284,7 +285,11 @@ model Activity {
   contact       Contact?      @relation(fields: [contactId], references: [id])
   company       Company?      @relation(fields: [companyId], references: [id])
 
-  @@unique([workspaceId, crmConnectionId, externalId])
+  // HubSpot engagement ids (calls, emails, meetings, notes, tasks) are only
+  // unique within their own object type, so `type` must be part of the key
+  // — otherwise a call and an email sharing the same numeric id would
+  // collide and overwrite each other.
+  @@unique([workspaceId, crmConnectionId, type, externalId])
   @@index([workspaceId])
   @@index([workspaceId, dealId])
   @@index([workspaceId, occurredAt])
@@ -335,6 +340,11 @@ model Finding {
   deal            Deal?            @relation(fields: [dealId], references: [id])
   recommendations Recommendation[]
 
+  // One live finding per (deal, type) — re-detection refreshes the same row
+  // and flips it OPEN again rather than creating a duplicate. Nullable
+  // dealId is fine: Postgres treats each NULL as distinct, so non-deal
+  // findings (not yet implemented) won't collide with each other.
+  @@unique([workspaceId, dealId, type])
   @@index([workspaceId])
   @@index([workspaceId, status])
 }
@@ -535,4 +545,48 @@ model AIUsage {
 
   @@index([workspaceId])
   @@index([workspaceId, createdAt])
+}
+
+// ---------- Background jobs ----------
+// See docs/Master Prompt — AI CRM Agent SaaS.md section 30. CRM sync and
+// pipeline analysis must not block the HTTP request that triggers them.
+// Jobs are normally run inline (via next/server `after()`) right after
+// being enqueued, so most rows go PENDING -> RUNNING -> COMPLETED within
+// the same request's lifetime. The row still exists so a crashed or
+// timed-out run is retryable, observable, and can't silently vanish — a
+// periodic sweep (see /api/cron/jobs) picks up anything left PENDING or
+// due for a retry.
+
+enum JobType {
+  CRM_SYNC
+  PIPELINE_ANALYSIS
+  DEAL_ANALYSIS
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model Job {
+  id          String    @id @default(cuid())
+  workspaceId String
+  type        JobType
+  status      JobStatus @default(PENDING)
+  payload     Json
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(3)
+  runAt       DateTime  @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+  lastError   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([status, runAt])
 }

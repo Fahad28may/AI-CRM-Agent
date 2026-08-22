@@ -2,13 +2,10 @@ import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
-
-const HEALTH_TILES = [
-  { label: "Healthy deals", value: "—" },
-  { label: "At-risk deals", value: "—" },
-  { label: "Stale deals", value: "—" },
-  { label: "Needs action", value: "—" },
-];
+import { db } from "@/lib/db";
+import { getWorkspaceBySlug } from "@/lib/workspace-server";
+import { getWorkspacePipeline, summarizePipeline } from "@/lib/pipeline/summary";
+import { RecommendationList } from "@/components/dashboard/recommendation-list";
 
 export default async function WorkspaceDashboardPage({
   params,
@@ -16,6 +13,25 @@ export default async function WorkspaceDashboardPage({
   params: Promise<{ workspaceSlug: string }>;
 }) {
   const { workspaceSlug } = await params;
+  const workspace = await getWorkspaceBySlug(workspaceSlug);
+  const deals = workspace ? await getWorkspacePipeline(workspace.id) : [];
+  const summary = summarizePipeline(deals);
+
+  const recommendations = workspace
+    ? await db.recommendation.findMany({
+        where: { workspaceId: workspace.id },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+        include: { deal: { select: { name: true } } },
+      })
+    : [];
+
+  const HEALTH_TILES = [
+    { label: "Healthy deals", value: summary.healthy },
+    { label: "At-risk deals", value: summary.atRisk },
+    { label: "Stale deals", value: summary.stale },
+    { label: "Needs action", value: summary.needsAction },
+  ];
 
   return (
     <div className="flex flex-col gap-8">
@@ -36,15 +52,30 @@ export default async function WorkspaceDashboardPage({
       <div>
         <h2 className="text-base font-semibold text-zinc-900">AI recommendations</h2>
         <div className="mt-4">
-          <EmptyState
-            title="No recommendations yet"
-            description="Connect HubSpot and run your first analysis to start seeing which deals need attention, evidence for why, and suggested next steps."
-            action={
-              <Link href={`/w/${workspaceSlug}/integrations`}>
-                <Button>Connect HubSpot</Button>
-              </Link>
-            }
-          />
+          {deals.length === 0 ? (
+            <EmptyState
+              title="No recommendations yet"
+              description="Connect HubSpot and run your first analysis to start seeing which deals need attention, evidence for why, and suggested next steps."
+              action={
+                <Link href={`/w/${workspaceSlug}/integrations`}>
+                  <Button>Connect HubSpot</Button>
+                </Link>
+              }
+            />
+          ) : (
+            <RecommendationList
+              recommendations={recommendations.map((r) => ({
+                id: r.id,
+                dealName: r.deal?.name ?? null,
+                reasoning: r.reasoning,
+                evidence: r.evidence,
+                proposedAction: r.proposedAction,
+                confidence: r.confidence,
+                riskLevel: r.riskLevel,
+                createdAt: r.createdAt,
+              }))}
+            />
+          )}
         </div>
       </div>
     </div>
