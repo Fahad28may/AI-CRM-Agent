@@ -3,6 +3,7 @@ import { HANDLERS } from "@/lib/jobs/dispatch";
 import { claimJob, completeJob, enqueueJob, failJob, listDueJobIds } from "@/lib/jobs/queue";
 import { findFindingsNeedingRecommendation } from "@/lib/ai/service";
 import { CRMConnectionStatus, JobType, NotificationType } from "@/generated/prisma/enums";
+import type { Job } from "@/generated/prisma/client";
 import type { JobPayloadMap } from "@/lib/jobs/types";
 
 // Section 17/Phase 7 "scheduled analysis": deals can cross a staleness/
@@ -63,8 +64,28 @@ export async function runJob(jobId: string): Promise<void> {
     }
   } catch (error) {
     const { terminal } = await failJob(job, error);
-    if (terminal && job.type === JobType.CRM_SYNC) {
-      const message = error instanceof Error ? error.message : "CRM sync failed";
+    if (terminal) {
+      await notifyTerminalFailure(job, error);
+    }
+  }
+}
+
+/**
+ * Surfaces a job's terminal failure (retries exhausted) as a
+ * Notification. Every job type gets one — a DEAL_ANALYSIS job that
+ * silently exhausts its retries (e.g. the AI provider is down or
+ * rate-limited past the retry window) would otherwise leave a Finding
+ * stuck OPEN with no recommendation and zero explanation of why,
+ * violating rule 7 (every important AI action must be explainable).
+ * EXECUTE_ACTION is exhaustively listed but never reaches here — see
+ * src/lib/actions/execute.ts, which handles and notifies its own
+ * failures without rethrowing.
+ */
+async function notifyTerminalFailure(job: Job, error: unknown): Promise<void> {
+  const message = error instanceof Error ? error.message : "Job failed";
+
+  switch (job.type) {
+    case JobType.CRM_SYNC:
       await db.notification.create({
         data: {
           workspaceId: job.workspaceId,
@@ -73,7 +94,40 @@ export async function runJob(jobId: string): Promise<void> {
           body: message,
         },
       });
+      return;
+
+    case JobType.DEAL_ANALYSIS: {
+      const { findingId } = job.payload as JobPayloadMap["DEAL_ANALYSIS"];
+      const finding = await db.finding.findUnique({
+        where: { id: findingId },
+        select: { deal: { select: { name: true } } },
+      });
+      await db.notification.create({
+        data: {
+          workspaceId: job.workspaceId,
+          type: NotificationType.ANALYSIS_FAILED,
+          title: `AI analysis failed for ${finding?.deal?.name ?? "a deal"}`,
+          body: message,
+          relatedType: "finding",
+          relatedId: findingId,
+        },
+      });
+      return;
     }
+
+    case JobType.PIPELINE_ANALYSIS:
+      await db.notification.create({
+        data: {
+          workspaceId: job.workspaceId,
+          type: NotificationType.ANALYSIS_FAILED,
+          title: "Pipeline analysis failed",
+          body: message,
+        },
+      });
+      return;
+
+    case JobType.EXECUTE_ACTION:
+      return;
   }
 }
 

@@ -516,6 +516,7 @@ enum NotificationType {
   SYNC_FAILURE
   DEAL_RISK
   PENDING_APPROVAL
+  ANALYSIS_FAILED
 }
 
 model Notification {
