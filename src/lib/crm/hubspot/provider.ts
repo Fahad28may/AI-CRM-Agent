@@ -391,14 +391,18 @@ export class HubSpotProvider implements CRMProvider {
       },
     });
 
+    // The v3 "default association" shortcut only works for a handful of
+    // hardcoded object-type pairs and 400s ("Unable to infer object type
+    // from: default") for tasks — confirmed against a live account.
+    // v4 supports it generically for any pair.
     if (input.associateWithContactExternalId) {
       await this.client.put(
-        `/crm/v3/objects/tasks/${created.id}/associations/default/contacts/${input.associateWithContactExternalId}`,
+        `/crm/v4/objects/tasks/${created.id}/associations/default/contacts/${input.associateWithContactExternalId}`,
       );
     }
     if (input.associateWithDealExternalId) {
       await this.client.put(
-        `/crm/v3/objects/tasks/${created.id}/associations/default/deals/${input.associateWithDealExternalId}`,
+        `/crm/v4/objects/tasks/${created.id}/associations/default/deals/${input.associateWithDealExternalId}`,
       );
     }
 
