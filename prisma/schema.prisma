@@ -387,6 +387,7 @@ model Recommendation {
 
   @@index([workspaceId])
   @@index([workspaceId, findingId])
+  @@index([workspaceId, createdAt])
 }
 
 // ---------- Approval / action execution ----------
@@ -429,6 +430,7 @@ model Action {
   @@unique([recommendationId])
   @@index([workspaceId])
   @@index([workspaceId, status])
+  @@index([workspaceId, createdAt])
 }
 
 enum ApprovalDecision {
