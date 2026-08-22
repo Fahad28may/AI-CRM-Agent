@@ -421,6 +421,12 @@ model Action {
   approval       Approval?
   auditLogs      AuditLog[]
 
+  // Postgres allows multiple NULLs through a unique constraint, so this
+  // only ever constrains the recommendation-backed path (approve/reject),
+  // which is the only place Action rows are created today — it stops two
+  // concurrent decisions on the same recommendation from both creating an
+  // Action and each independently executing (duplicate email/CRM write).
+  @@unique([recommendationId])
   @@index([workspaceId])
   @@index([workspaceId, status])
 }

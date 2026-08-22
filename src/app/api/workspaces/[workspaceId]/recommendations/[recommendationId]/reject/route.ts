@@ -3,8 +3,8 @@ import { requireWorkspaceMember } from "@/lib/authz";
 import { withErrorHandling } from "@/lib/api-handler";
 import { jsonError, jsonOk } from "@/lib/api-response";
 import { rejectRecommendationSchema } from "@/lib/validation/recommendation";
-import { ActionStatus, ActorType, ApprovalDecision } from "@/generated/prisma/enums";
-import type { Prisma } from "@/generated/prisma/client";
+import { decideRecommendation, RecommendationAlreadyDecidedError } from "@/lib/actions/decide";
+import { ActionStatus, ApprovalDecision } from "@/generated/prisma/enums";
 
 type Params = { params: Promise<{ workspaceId: string; recommendationId: string }> };
 
@@ -24,40 +24,20 @@ export const POST = withErrorHandling(async (request: Request, { params }: Param
   const body = await request.json().catch(() => ({}));
   const { notes } = rejectRecommendationSchema.parse(body);
 
-  const action = await db.action.create({
-    data: {
-      workspaceId,
-      recommendationId: recommendation.id,
-      type: recommendation.type,
-      targetRecordType: recommendation.targetRecordType,
-      targetRecordId: recommendation.targetRecordId,
-      payload: recommendation.proposedAction as Prisma.InputJsonValue,
-      status: ActionStatus.REJECTED,
-    },
-  });
-
-  await db.approval.create({
-    data: {
-      workspaceId,
-      actionId: action.id,
+  try {
+    const action = await decideRecommendation({
+      recommendation,
       userId: user.id,
       decision: ApprovalDecision.REJECTED,
+      status: ActionStatus.REJECTED,
+      payload: recommendation.proposedAction,
       notes,
-    },
-  });
-
-  await db.auditLog.create({
-    data: {
-      workspaceId,
-      userId: user.id,
-      actorType: ActorType.USER,
-      action: "recommendation_rejected",
-      targetType: recommendation.targetRecordType,
-      targetId: recommendation.targetRecordId,
-      actionId: action.id,
-      source: "api",
-    },
-  });
-
-  return jsonOk({ action });
+    });
+    return jsonOk({ action });
+  } catch (error) {
+    if (error instanceof RecommendationAlreadyDecidedError) {
+      return jsonError(error.message, 400);
+    }
+    throw error;
+  }
 });

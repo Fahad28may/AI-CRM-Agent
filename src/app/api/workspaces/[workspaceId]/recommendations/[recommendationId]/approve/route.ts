@@ -4,9 +4,9 @@ import { requireWorkspaceMember } from "@/lib/authz";
 import { withErrorHandling } from "@/lib/api-handler";
 import { jsonError, jsonOk } from "@/lib/api-response";
 import { approveRecommendationSchema } from "@/lib/validation/recommendation";
-import { ActionStatus, ActorType, ApprovalDecision, JobType } from "@/generated/prisma/enums";
+import { decideRecommendation, RecommendationAlreadyDecidedError } from "@/lib/actions/decide";
+import { ActionStatus, ApprovalDecision, JobType } from "@/generated/prisma/enums";
 import { enqueueAndRun } from "@/lib/jobs/run";
-import type { Prisma } from "@/generated/prisma/client";
 
 type Params = { params: Promise<{ workspaceId: string; recommendationId: string }> };
 
@@ -30,39 +30,21 @@ export const POST = withErrorHandling(async (request: Request, { params }: Param
   }
   const finalPayload = proposedAction ?? recommendation.proposedAction;
 
-  const action = await db.action.create({
-    data: {
-      workspaceId,
-      recommendationId: recommendation.id,
-      type: recommendation.type,
-      targetRecordType: recommendation.targetRecordType,
-      targetRecordId: recommendation.targetRecordId,
-      payload: finalPayload as Prisma.InputJsonValue,
-      status: ActionStatus.APPROVED,
-    },
-  });
-
-  await db.approval.create({
-    data: {
-      workspaceId,
-      actionId: action.id,
+  let action;
+  try {
+    action = await decideRecommendation({
+      recommendation,
       userId: user.id,
       decision: ApprovalDecision.APPROVED,
-    },
-  });
-
-  await db.auditLog.create({
-    data: {
-      workspaceId,
-      userId: user.id,
-      actorType: ActorType.USER,
-      action: "recommendation_approved",
-      targetType: recommendation.targetRecordType,
-      targetId: recommendation.targetRecordId,
-      actionId: action.id,
-      source: "api",
-    },
-  });
+      status: ActionStatus.APPROVED,
+      payload: finalPayload,
+    });
+  } catch (error) {
+    if (error instanceof RecommendationAlreadyDecidedError) {
+      return jsonError(error.message, 400);
+    }
+    throw error;
+  }
 
   after(() => enqueueAndRun(workspaceId, JobType.EXECUTE_ACTION, { actionId: action.id }));
 
