@@ -41,6 +41,7 @@ export type RecommendationListItem = {
     status: ActionStatus;
     resultSummary: string | null;
     errorMessage: string | null;
+    payload: unknown;
   } | null;
 };
 
@@ -185,7 +186,9 @@ function RecommendationCard({ recommendation: rec }: { recommendation: Recommend
           <EditForm draft={draft} onChange={setDraft} />
         ) : (
           <div className="flex items-center justify-between text-xs text-zinc-500">
-            <span className="font-medium text-zinc-700">{summarizeAction(rec.proposedAction)}</span>
+            <span className="font-medium text-zinc-700">
+              {summarizeAction(latestAction?.payload ?? rec.proposedAction)}
+            </span>
             <span>{Math.round(rec.confidence * 100)}% confidence</span>
           </div>
         )}

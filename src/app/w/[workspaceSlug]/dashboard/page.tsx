@@ -27,7 +27,7 @@ export default async function WorkspaceDashboardPage({
           actions: {
             orderBy: { createdAt: "desc" },
             take: 1,
-            select: { id: true, status: true, resultSummary: true, errorMessage: true },
+            select: { id: true, status: true, resultSummary: true, errorMessage: true, payload: true },
           },
         },
       })

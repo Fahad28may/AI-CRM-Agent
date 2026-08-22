@@ -20,7 +20,7 @@ export default async function RecommendationsPage({
           actions: {
             orderBy: { createdAt: "desc" },
             take: 1,
-            select: { id: true, status: true, resultSummary: true, errorMessage: true },
+            select: { id: true, status: true, resultSummary: true, errorMessage: true, payload: true },
           },
         },
       })
