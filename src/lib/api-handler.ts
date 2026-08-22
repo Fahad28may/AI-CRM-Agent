@@ -1,4 +1,4 @@
-import { AuthError } from "@/lib/authz";
+import { AuthError } from "@/lib/errors";
 import { jsonError } from "@/lib/api-response";
 import { ZodError } from "zod";
 

@@ -1,18 +1,10 @@
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { roleAtLeast } from "@/lib/roles";
+import { AuthError } from "@/lib/errors";
 import type { WorkspaceRole } from "@/generated/prisma/enums";
 
-export { roleAtLeast };
-
-export class AuthError extends Error {
-  constructor(
-    message: string,
-    public status: number,
-  ) {
-    super(message);
-  }
-}
+export { roleAtLeast, AuthError };
 
 /** Resolves the authenticated user, or throws a 401 AuthError. */
 export async function requireUser() {

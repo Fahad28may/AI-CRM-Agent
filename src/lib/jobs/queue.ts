@@ -1,10 +1,11 @@
 import { db } from "@/lib/db";
 import { JobStatus } from "@/generated/prisma/enums";
+import { computeRetryDelayMs } from "@/lib/jobs/backoff";
 import type { JobType } from "@/generated/prisma/enums";
 import type { Job } from "@/generated/prisma/client";
 import type { JobPayloadMap } from "@/lib/jobs/types";
 
-const BASE_RETRY_DELAY_MS = 60_000;
+export { computeRetryDelayMs };
 
 /**
  * Creates a job, or returns the existing one if an identical (same type,
@@ -61,7 +62,7 @@ export async function failJob(job: Job, error: unknown): Promise<{ terminal: boo
   const message = error instanceof Error ? error.message : String(error);
 
   if (job.attempts < job.maxAttempts) {
-    const delayMs = BASE_RETRY_DELAY_MS * 2 ** (job.attempts - 1);
+    const delayMs = computeRetryDelayMs(job.attempts);
     await db.job.update({
       where: { id: job.id },
       data: { status: JobStatus.PENDING, runAt: new Date(Date.now() + delayMs), lastError: message },
